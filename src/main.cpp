@@ -3,11 +3,12 @@
 
 // a single latching button is used to power on/off and select the effect.
 // when the uc boots the last effect used is read from the EEPROM and the next effect is determined from that.
-// max EEPROM size for attiny is 512.
-// setting EFFECT_ADDR_UB to 256 leaves room for other data.
 // by cycling through addresses we can wear out a cell more slowly than writing to the same address every time.
 // this should change number of possible boots from around 100,000 to (EFFECT_ADDR_UB/2)*100,000.
-#define EFFECT_ADDR_UB (EEPROM.length()/2)
+// EFFECT_ADDR_UB/2 is used in the formula above since 2 address are written to when the effect is switched at power on.
+// you might want to leave room for other EEEPROM data by setting EFFECT_ADDR_UB to something less than EEPROM.length()
+//#define EFFECT_ADDR_UB (EEPROM.length()/2)
+#define EFFECT_ADDR_UB (EEPROM.length())
 
 #define PERIOD 500
 #define TICS_PER_SEC (1000 / PERIOD)
@@ -22,6 +23,8 @@ uint16_t rand16seed = RAND16_SEED;
 
 #if defined(__AVR_ATmega328P__)
 int pwmPin = 3;
+#elif defined(__AVR_ATmega8__)
+int pwmPin = 11;
 #elif defined(__AVR_ATtiny85__)
 int pwmPin = 0;
 #endif
@@ -35,7 +38,6 @@ uint16_t tic = 0;
 #define NUM_EFFECTS 3
 enum EFFECT {NONE = 0, BREATHING = 1, FLICKER = 2};
 EFFECT effect = BREATHING;
-//EFFECT effect = NONE;
 
 LIB8STATIC uint8_t random8() {
     rand16seed = (rand16seed * FASTLED_RAND16_2053) + FASTLED_RAND16_13849;
@@ -113,7 +115,7 @@ void get_effect() {
         // the default value of a byte in an erased EEPROM is 255
         // anything less than the 255 indicates datum was written to this address
         // the data are stored in an inverted form so they are closer to 255
-        // which means fewer bits need to be change when setting an address back to the default (255)
+        // which means fewer bits need to be changed when setting an address back to the default (255)
         if (d < 255) {
            e = (~d) - 1; // e.g. (~254) - 1 = 0
            break; 
@@ -159,14 +161,26 @@ void setup() {
     pinMode(pwmPin, OUTPUT);
     max_brightness = 255;
 
+noInterrupts();
+#if defined(__AVR_ATmega328P__)
     //https://playground.arduino.cc/Main/TimerPWMCheatsheet/
     //Pins 11 and 3: controlled by timer 2 in phase-correct PWM mode (cycle length = 510)
     TCCR2B = (TCCR2B & 0b11111000) | 0x01; // divisor of 1 at 1 MHz = PWM frequency of 1960.784375 Hz
-
-    //TODO: can we make this code work for attiny85 too? different timer.
+#elif defined(__AVR_ATmega8__)
+    //Pins 11 and 3: controlled by timer 2 in phase-correct PWM mode (cycle length = 510)
+    TCCR2 = (TCCR2 & 0b11111000) | 0x01; // divisor of 1 at 1 MHz = PWM frequency of 1960.784375 Hz
+#elif defined(__AVR_ATtiny85__)
+    // Pin 0: controlled by timer 0 in fast PWM mode
+    // attiny85 does not appear to need its divisor changed.
+    // it seems like divisor should be 1 when div by 8 fuse is enabled (1 MHz clock?)
+    //defaults
+    //TCCR0A == 0b00000011 fast PWM
+    //TCCR0B == 0b00000010 divide by 8
+#endif
+interrupts();
 
     //uint8_t run_debug_num = 2;
-    //while(run_debug_num > 0) {
+    //while (run_debug_num > 0) {
     //    if (run_debug_num == 1) {
     //        blink_timing_debug01();
     //    }
@@ -174,6 +188,7 @@ void setup() {
     //        blink_timing_debug02();
     //    }
     //}
+
 }
 
 void loop() {
